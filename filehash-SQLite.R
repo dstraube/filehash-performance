@@ -1,5 +1,6 @@
 ######################################################################
 ## Copyright (C) 2006, Roger D. Peng <rpeng@jhsph.edu>
+## Modifications 2014, Dave Straube, http://davestraube.com
 ##     
 ## This program is free software; you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -17,6 +18,12 @@
 ## 02110-1301, USA
 #####################################################################
 
+# Following boolean values represent the original filehashSQLite behavior.
+# Flip logical value to get "SQLite plus" behavior.
+KEY_INDEX <- FALSE
+DELETE_BEFORE_ADD <- TRUE
+INSERT_OR_REPLACE <- FALSE
+EXISTS_BY_QUERY <- FALSE
 
 setClass("filehashSQLite",
          representation(datafile = "character",
@@ -36,8 +43,11 @@ createSQLite <- function(dbName) {
     ## Create single data table for keys and values
     SQLcmd <- paste("CREATE TABLE \"", basename(dbName),
                     "\" (\"key\" TEXT, \"value\" TEXT)", sep = "")
-    
     dbGetQuery(dbcon, SQLcmd)
+    if ( KEY_INDEX ) {
+        SQLcmd <- paste("CREATE UNIQUE INDEX keyindex ON \"", basename(dbName), "\" (key)", sep="")
+        dbGetQuery(dbcon, SQLcmd)
+    }
     invisible(TRUE)
 }
 
@@ -70,12 +80,19 @@ setMethod("dbInsert",
           signature(db = "filehashSQLite", key = "character", value = "ANY"),
           function(db, key, value, ...) {
               data <- toString(value)
-              SQLcmd <- paste("INSERT INTO ", db@name,
+              if ( INSERT_OR_REPLACE ) {
+                  cmd <- "INSERT OR REPLACE"
+              } else {
+                  cmd <- "INSERT"
+              }
+              SQLcmd <- paste(cmd, " INTO ", db@name,
                               " (key,value) VALUES (\"",
                               key, "\",\"", data, "\")",
                               sep = "")
-              ## Remove key before inserting it
-              dbDelete(db, key)
+              if ( DELETE_BEFORE_ADD ) {
+                  ## Remove key before inserting it
+                  dbDelete(db, key)
+              }
               dbGetQuery(db@dbcon, SQLcmd)
               invisible(TRUE)
           })
@@ -138,8 +155,17 @@ setMethod("dbList", "filehashSQLite",
 
 setMethod("dbExists", signature(db = "filehashSQLite", key = "character"),
           function(db, key, ...) {
-              keys <- dbList(db)
-              key %in% keys
+              if ( EXISTS_BY_QUERY ) {
+                  SQLcmd <- paste("SELECT key FROM ", db@name, " WHERE key = '", key, "'", sep="")
+                  data <- dbGetQuery(db@dbcon, SQLcmd)
+                  if(length(data$key) == 0)
+                      FALSE
+                  else
+                      TRUE
+              } else {
+                  keys <- dbList(db)
+                  key %in% keys
+              }
           })
 
 setMethod("dbUnlink", "filehashSQLite",
