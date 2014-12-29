@@ -1,0 +1,67 @@
+---
+title: "Filehash Performance Analysis"
+author: "Dave Straube"
+date: "December 29, 2014"
+output: html_document
+---
+
+### Overview
+
+This document provides a brief performance analysis of the filehash package.  Test data shows that:
+
+1. dbWrite-intensive applications should use the DB1 filehash.
+
+2. dbRead-intensive applications of less than 100,000 elements should use the RDS filehash.
+Those with more than 100,000 elements should use a DB1 filehash.
+
+3. dbList-intensive and dbExists-intensive databases should use a modified SQLite filehash.
+
+The following charts summarize our performance tests.
+
+```{r, echo=FALSE, fig.width=7, fig.height=7, fig.align="center"}
+load(file="./filehash results.RData")
+PlotResults <- function() {
+    colors <- c("forestgreen", "red", "blue", "black")
+    marks <- c(15, 16, 17, 18)
+    par(mfrow=c(2,2))
+    for ( op in ops ) {
+        plot(c(testcounts[1], testcounts[length(testcounts)]),
+             c(0, 1.1 * max(as.matrix(results[[op]]))),
+             type="n",
+             main=op,
+             xlab="Item count",
+             ylab="Operations per second")
+        legend(x="topright", legend=tests$dbname, col=colors, pch=marks,
+               x.intersp=1, y.intersp=1, cex=1.0, bty="n")
+        for ( testidx in seq(dim(tests)[1]) ) {
+            points(testcounts, results[[op]][, tests$dbname[testidx]], col=colors[testidx], pch=marks[testidx])
+            lines(testcounts, results[[op]][, tests$dbname[testidx]], col=colors[testidx])
+        }
+    }
+}
+PlotResults()
+```
+
+### filehashSQLite Modifications
+
+Only minor changes were required to achieve the performance benefits associated with the
+filehashSQLite variant labeled SQLite_Plus in the charts above.
+
+1. Add a unique key index.
+
+2. Remove the delete before add operation.
+
+3. Change SQL "INSERT" operation to "INSERT OR REPLACE".
+
+4. Perform existence checks using index lookup rather than listing all keys and using
+R's `%in%` operator.
+
+Code changes are captured in the filehash-SQLite.R change history.
+
+### Test Environment
+
+```{r}
+sessionInfo()
+```
+
+
