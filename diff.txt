@@ -1,0 +1,184 @@
+#############################################################	#############################################################
+## Copyright (C) 2006, Roger D. Peng <rpeng@jhsph.edu>		## Copyright (C) 2006, Roger D. Peng <rpeng@jhsph.edu>
+							      >	## Modifications 2014, Dave Straube, http://davestraube.com
+##     								##     
+## This program is free software; you can redistribute it and	## This program is free software; you can redistribute it and
+## it under the terms of the GNU General Public License as pu	## it under the terms of the GNU General Public License as pu
+## the Free Software Foundation; either version 2 of the Lice	## the Free Software Foundation; either version 2 of the Lice
+## (at your option) any later version.				## (at your option) any later version.
+## 								## 
+## This program is distributed in the hope that it will be us	## This program is distributed in the hope that it will be us
+## but WITHOUT ANY WARRANTY; without even the implied warrant	## but WITHOUT ANY WARRANTY; without even the implied warrant
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See 	## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See 
+## GNU General Public License for more details.			## GNU General Public License for more details.
+## 								## 
+## You should have received a copy of the GNU General Public 	## You should have received a copy of the GNU General Public 
+## along with this program; if not, write to the Free Softwar	## along with this program; if not, write to the Free Softwar
+## Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,	## Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+## 02110-1301, USA						## 02110-1301, USA
+#############################################################	#############################################################
+
+							      >	# Following boolean values represent the original filehashSQL
+							      >	# Flip logical value to get "SQLite plus" behavior.
+							      >	KEY_INDEX <- FALSE
+							      >	DELETE_BEFORE_ADD <- TRUE
+							      >	INSERT_OR_REPLACE <- FALSE
+							      >	EXISTS_BY_QUERY <- FALSE
+
+setClass("filehashSQLite",					setClass("filehashSQLite",
+         representation(datafile = "character",			         representation(datafile = "character",
+                        dbcon = "SQLiteConnection",		                        dbcon = "SQLiteConnection",
+                        drv = "SQLiteDriver"),			                        drv = "SQLiteDriver"),
+         contains = "filehash"					         contains = "filehash"
+         )							         )
+
+createSQLite <- function(dbName) {				createSQLite <- function(dbName) {
+    drv <- dbDriver("SQLite")					    drv <- dbDriver("SQLite")
+    dbcon <- dbConnect(drv, dbName)				    dbcon <- dbConnect(drv, dbName)
+    on.exit({							    on.exit({
+        dbDisconnect(dbcon)					        dbDisconnect(dbcon)
+        dbUnloadDriver(drv)					        dbUnloadDriver(drv)
+    })								    })
+
+    ## Create single data table for keys and values		    ## Create single data table for keys and values
+    SQLcmd <- paste("CREATE TABLE \"", basename(dbName),	    SQLcmd <- paste("CREATE TABLE \"", basename(dbName),
+                    "\" (\"key\" TEXT, \"value\" TEXT)", sep 	                    "\" (\"key\" TEXT, \"value\" TEXT)", sep 
+    							      <
+    dbGetQuery(dbcon, SQLcmd)					    dbGetQuery(dbcon, SQLcmd)
+							      >	    if ( KEY_INDEX ) {
+							      >	        SQLcmd <- paste("CREATE UNIQUE INDEX keyindex ON \"",
+							      >	        dbGetQuery(dbcon, SQLcmd)
+							      >	    }
+    invisible(TRUE)						    invisible(TRUE)
+}								}
+
+initializeSQLite <- function(dbName) {				initializeSQLite <- function(dbName) {
+    drv <- dbDriver("SQLite")					    drv <- dbDriver("SQLite")
+    dbcon <- dbConnect(drv, dbName)				    dbcon <- dbConnect(drv, dbName)
+    new("filehashSQLite", datafile = normalizePath(dbName), d	    new("filehashSQLite", datafile = normalizePath(dbName), d
+        drv = drv, name = basename(dbName))			        drv = drv, name = basename(dbName))
+}								}
+
+toString <- function(x) {					toString <- function(x) {
+    bytes <- serialize(x, NULL)					    bytes <- serialize(x, NULL)
+    int <- as.integer(bytes)					    int <- as.integer(bytes)
+    paste(as.character(int), collapse = ":")			    paste(as.character(int), collapse = ":")
+}								}
+
+toObject <- function(x) {					toObject <- function(x) {
+    ## For compatibility with previous version			    ## For compatibility with previous version
+    out <- try(unserialize(x), silent = TRUE)			    out <- try(unserialize(x), silent = TRUE)
+
+    if(!inherits(out, "try-error")) 				    if(!inherits(out, "try-error")) 
+        return(out)						        return(out)
+    s <- strsplit(x, ":", fixed = TRUE)[[1]]			    s <- strsplit(x, ":", fixed = TRUE)[[1]]
+    int <- as.integer(s)					    int <- as.integer(s)
+    bytes <- as.raw(int)					    bytes <- as.raw(int)
+    unserialize(bytes)						    unserialize(bytes)
+}								}
+
+setMethod("dbInsert",						setMethod("dbInsert",
+          signature(db = "filehashSQLite", key = "character",	          signature(db = "filehashSQLite", key = "character",
+          function(db, key, value, ...) {			          function(db, key, value, ...) {
+              data <- toString(value)				              data <- toString(value)
+              SQLcmd <- paste("INSERT INTO ", db@name,	      |	              if ( INSERT_OR_REPLACE ) {
+							      >	                  cmd <- "INSERT OR REPLACE"
+							      >	              } else {
+							      >	                  cmd <- "INSERT"
+							      >	              }
+							      >	              SQLcmd <- paste(cmd, " INTO ", db@name,
+                              " (key,value) VALUES (\"",	                              " (key,value) VALUES (\"",
+                              key, "\",\"", data, "\")",	                              key, "\",\"", data, "\")",
+                              sep = "")				                              sep = "")
+							      >	              if ( DELETE_BEFORE_ADD ) {
+              ## Remove key before inserting it			                  ## Remove key before inserting it
+              dbDelete(db, key)					                  dbDelete(db, key)
+							      >	              }
+              dbGetQuery(db@dbcon, SQLcmd)			              dbGetQuery(db@dbcon, SQLcmd)
+              invisible(TRUE)					              invisible(TRUE)
+          })							          })
+
+setMethod("dbFetch", signature(db = "filehashSQLite", key = "	setMethod("dbFetch", signature(db = "filehashSQLite", key = "
+          function(db, key, ...) {				          function(db, key, ...) {
+              SQLcmd <- paste("SELECT value FROM ", db@name,	              SQLcmd <- paste("SELECT value FROM ", db@name,
+                              " WHERE key = \"", key, "\"", s	                              " WHERE key = \"", key, "\"", s
+              data <- dbGetQuery(db@dbcon, SQLcmd)		              data <- dbGetQuery(db@dbcon, SQLcmd)
+              							              
+              if(is.null(data$value))				              if(is.null(data$value))
+                  stop(gettextf("no value associated with key	                  stop(gettextf("no value associated with key
+              toObject(data$value)				              toObject(data$value)
+          })							          })
+
+setMethod("dbMultiFetch",					setMethod("dbMultiFetch",
+          signature(db = "filehashSQLite", key = "character")	          signature(db = "filehashSQLite", key = "character")
+          function(db, key, ...) {				          function(db, key, ...) {
+              keylist <- paste("\"", key, "\"", collapse = ",	              keylist <- paste("\"", key, "\"", collapse = ",
+              SQLcmd <- paste("SELECT key, value FROM ", db@n	              SQLcmd <- paste("SELECT key, value FROM ", db@n
+                              " WHERE key IN (", keylist, ")"	                              " WHERE key IN (", keylist, ")"
+              data <- dbGetQuery(db@dbcon, SQLcmd)		              data <- dbGetQuery(db@dbcon, SQLcmd)
+
+              if(is.null(data))					              if(is.null(data))
+                  stop("no values associated with keys")	                  stop("no values associated with keys")
+              							              
+              k <- as.character(data$key)			              k <- as.character(data$key)
+              r <- lapply(data$value, toObject)			              r <- lapply(data$value, toObject)
+              names(r) <- k					              names(r) <- k
+              							              
+              if(length(k) != length(key))			              if(length(k) != length(key))
+                  warning(gettextf("no values associated with	                  warning(gettextf("no values associated with
+                                   paste("'", setdiff(key, k)	                                   paste("'", setdiff(key, k)
+                                         collapse = ", ")))	                                         collapse = ", ")))
+              r							              r
+          })							          })
+
+setMethod("[", signature(x = "filehashSQLite", i = "character	setMethod("[", signature(x = "filehashSQLite", i = "character
+          function(x, i , j, ..., drop) {			          function(x, i , j, ..., drop) {
+              dbMultiFetch(x, i)				              dbMultiFetch(x, i)
+          })							          })
+
+setMethod("dbDelete", signature(db = "filehashSQLite", key = 	setMethod("dbDelete", signature(db = "filehashSQLite", key = 
+          function(db, key, ...) {				          function(db, key, ...) {
+              SQLcmd <- paste("DELETE FROM ", db@name,		              SQLcmd <- paste("DELETE FROM ", db@name,
+                              " WHERE key = \"", key, "\"", s	                              " WHERE key = \"", key, "\"", s
+              dbGetQuery(db@dbcon, SQLcmd)			              dbGetQuery(db@dbcon, SQLcmd)
+              invisible(TRUE)					              invisible(TRUE)
+          })							          })
+
+setMethod("dbList", "filehashSQLite",				setMethod("dbList", "filehashSQLite",
+          function(db, ...) {					          function(db, ...) {
+              SQLcmd <- paste("SELECT key FROM", db@name)	              SQLcmd <- paste("SELECT key FROM", db@name)
+              data <- dbGetQuery(db@dbcon, SQLcmd)		              data <- dbGetQuery(db@dbcon, SQLcmd)
+              if(length(data$key) == 0)				              if(length(data$key) == 0)
+                  character(0)					                  character(0)
+              else						              else
+                  as.character(data$key)			                  as.character(data$key)
+          })							          })
+
+setMethod("dbExists", signature(db = "filehashSQLite", key = 	setMethod("dbExists", signature(db = "filehashSQLite", key = 
+          function(db, key, ...) {				          function(db, key, ...) {
+							      >	              if ( EXISTS_BY_QUERY ) {
+							      >	                  SQLcmd <- paste("SELECT key FROM ", db@name
+							      >	                  data <- dbGetQuery(db@dbcon, SQLcmd)
+							      >	                  if(length(data$key) == 0)
+							      >	                      FALSE
+							      >	                  else
+							      >	                      TRUE
+							      >	              } else {
+              keys <- dbList(db)				                  keys <- dbList(db)
+              key %in% keys					                  key %in% keys
+							      >	              }
+          })							          })
+
+setMethod("dbUnlink", "filehashSQLite",				setMethod("dbUnlink", "filehashSQLite",
+          function(db, ...) {					          function(db, ...) {
+              dbDisconnect(db)					              dbDisconnect(db)
+              v <- unlink(db@datafile)				              v <- unlink(db@datafile)
+              invisible(isTRUE(v == 0))				              invisible(isTRUE(v == 0))
+          })							          })
+
+setMethod("dbDisconnect", "filehashSQLite",			setMethod("dbDisconnect", "filehashSQLite",
+          function(conn, ...) {					          function(conn, ...) {
+              dbDisconnect(conn@dbcon)				              dbDisconnect(conn@dbcon)
+              dbUnloadDriver(conn@drv)				              dbUnloadDriver(conn@drv)
+              invisible(TRUE)					              invisible(TRUE)
+          })							          })
